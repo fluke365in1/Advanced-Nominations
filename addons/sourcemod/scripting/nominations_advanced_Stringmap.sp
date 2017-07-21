@@ -33,6 +33,7 @@
 
 #include <sourcemod>
 #include <mapchooser>
+#include <clientprefs>
 
 #pragma semicolon 1
 #pragma newdecls required
@@ -65,7 +66,7 @@ KeyValues kv = null;
 
 StringMap g_mapTrie = null;
 StringMap g_mapInfo = null;
-StringMap HasNominated = null;
+Handle g_hNominationCookie = INVALID_HANDLE;
 
 public void OnPluginStart()
 {
@@ -82,9 +83,10 @@ public void OnPluginStart()
 	
 	RegAdminCmd("sm_nominate_addmap", Command_Addmap, ADMFLAG_CHANGEMAP, "sm_nominate_addmap <mapname> - Forces a map to be on the next mapvote.");
 	
+	g_hNominationCookie = RegClientCookie("nomination_map_cookie", "Stores the map vote for each client", CookieAccess_Private);
+	
 	g_mapTrie = new StringMap();
 	g_mapInfo = new StringMap();
-	HasNominated = new StringMap();
 }
 
 public void OnMapStart()
@@ -93,7 +95,6 @@ public void OnMapStart()
 	ply_count = 0;
 	
 	g_mapInfo.Clear();
-	HasNominated.Clear();
 }
 
 public void OnMapEnd()
@@ -103,10 +104,8 @@ public void OnMapEnd()
 
 public void OnClientConnected(int client)
 {
+	SetClientCookie(client, g_hNominationCookie, "");
 	++ply_count;
-	char ply[2] = " ";
-	IntToString(client, ply, sizeof(ply));
-	HasNominated.Remove(ply);				//remove client x entry from the string map
 }
 
 public void OnClientDisconnect(int client)
@@ -115,6 +114,20 @@ public void OnClientDisconnect(int client)
 	{
 		--ply_count;
 	}
+	char cookie[PLATFORM_MAX_PATH];
+	GetClientCookie(client, g_hNominationCookie, cookie, sizeof(cookie));
+	SetClientCookie(client, g_hNominationCookie, "");
+	
+	int map_array[2];
+	g_mapInfo.GetArray(cookie, map_array, 2);
+	++map_array[0];
+	
+	if(RemoveNominationByMap(cookie))
+	{
+		PrintToChatAll("[SM] %t", "Map Removed", cookie);
+	}
+	
+	g_mapInfo.SetArray(cookie, map_array, 2);
 }
 
 public void OnConfigsExecuted()
@@ -283,18 +296,17 @@ public Action Command_Nominate(int client, int args)
 	
 	int playercount = -1, nominations = -1, map_info[2] =  { 0, 0 }, map_info_player[2] =  { 0, 0 };
 
-	char ply[2] = " ";
 	char s_map[PLATFORM_MAX_PATH];
 	char name[MAX_NAME_LENGTH];
 	GetClientName(client, name, sizeof(name));
-	IntToString(client, ply, sizeof(ply));
+	GetClientCookie(client, g_hNominationCookie, s_map, sizeof(s_map));
 
 	if(g_mapInfo.GetArray(mapname, map_info, 2))
 	{
 		nominations = map_info[0];
 		playercount = map_info[1];
 	
-		if(HasNominated.GetString(ply, s_map, sizeof(s_map)))
+		if (!StrEqual(s_map, ""))
 		{
 			if (StrEqual(s_map, mapname))
 			{
@@ -315,7 +327,7 @@ public Action Command_Nominate(int client, int args)
 		{
 			if(nominations > 0)
 			{
-				HasNominated.SetString(ply, mapname);				//player has voted so decrease votes required or nominate the map
+				SetClientCookie(client, g_hNominationCookie, mapname); //player has voted so decrease votes required or nominate the map
 				--nominations;
 				map_info[0] = nominations;
 				g_mapInfo.SetArray(mapname, map_info, 2);			//update
@@ -332,7 +344,7 @@ public Action Command_Nominate(int client, int args)
 			return Plugin_Handled;
 		}
 	}
-	else if(HasNominated.GetString(ply, s_map, sizeof(s_map)))
+	else if(!StrEqual(s_map, ""))
 	{
 		if(g_mapInfo.GetArray(s_map, map_info_player, 2))
 		{
@@ -344,7 +356,7 @@ public Action Command_Nominate(int client, int args)
 			}
 		}
 	}
-	HasNominated.SetString(ply, mapname);				//update player's nomination for later use
+	SetClientCookie(client, g_hNominationCookie, mapname); //update player's nomination for later use
 	
 	NominateResult result = NominateMap(mapname, false, client);
 	if (result > Nominate_Replaced)
@@ -508,13 +520,13 @@ public int Handler_MapSelectMenu(Menu menu, MenuAction action, int param1, int p
 		{
 			char map[PLATFORM_MAX_PATH], name[MAX_NAME_LENGTH], displayName[PLATFORM_MAX_PATH];
 			menu.GetItem(param2, map, sizeof(map), _, displayName, sizeof(displayName));
-			char ply[2], s_map[PLATFORM_MAX_PATH];
-			IntToString(param1, ply, sizeof(ply));
+			char s_map[PLATFORM_MAX_PATH];
 			int map_info_player[2] =  { 0, 0 };
 			
 			GetClientName(param1, name, sizeof(name));
+			GetClientCookie(param1, g_hNominationCookie, s_map, sizeof(s_map));
 			
-			if(HasNominated.GetString(ply, s_map, sizeof(s_map)))
+			if(!StrEqual(s_map, ""))
 			{
 				if(g_mapInfo.GetArray(s_map, map_info_player, 2))
 				{
@@ -526,7 +538,7 @@ public int Handler_MapSelectMenu(Menu menu, MenuAction action, int param1, int p
 					}
 				}
 			}
-			HasNominated.SetString(ply, map);
+			SetClientCookie(param1, g_hNominationCookie, map);
 	
 			NominateResult result = NominateMap(map, false, param1);
 			
@@ -642,9 +654,7 @@ public int Handler_EventMapSelectMenu(Menu menu, MenuAction action, int param1, 
 {
 	int playercount = -1, nominations = -1;
 	int map_info[2] =  { 0, 0 }, map_info_player[2] = {0, 0};
-	char ply[2];
 	char s_map[PLATFORM_MAX_PATH];
-	IntToString(param1, ply, sizeof(ply));
 	
 	switch (action)
 	{
@@ -654,13 +664,14 @@ public int Handler_EventMapSelectMenu(Menu menu, MenuAction action, int param1, 
 			menu.GetItem(param2, map, sizeof(map));
 			
 			GetClientName(param1, name, MAX_NAME_LENGTH);
+			GetClientCookie(param1, g_hNominationCookie, s_map, sizeof(s_map));
 	
 			g_mapInfo.GetArray(map, map_info, 2);
 	
 			nominations = map_info[0];
 			playercount = map_info[1];
 	
-			if(HasNominated.GetString(ply, s_map, sizeof(s_map)))
+			if(!StrEqual(s_map, ""))
 			{
 				if (StrEqual(s_map, map))
 				{
@@ -681,7 +692,7 @@ public int Handler_EventMapSelectMenu(Menu menu, MenuAction action, int param1, 
 			{
 				if(nominations > 0)
 				{
-					HasNominated.SetString(ply, map);
+					SetClientCookie(param1, g_hNominationCookie, map);
 					--nominations;
 					map_info[0] = nominations;
 					g_mapInfo.SetArray(map, map_info, 2);
@@ -739,7 +750,7 @@ public int Handler_EventMapSelectMenu(Menu menu, MenuAction action, int param1, 
 				LogError("Menu selection of item not in trie. Major logic problem somewhere.");
 				return ITEMDRAW_DEFAULT;
 			}
-			HasNominated.GetString(ply, s_map, sizeof(s_map));
+			GetClientCookie(param1, g_hNominationCookie, s_map, sizeof(s_map));
 			if ((status & MAPSTATUS_DISABLED) == MAPSTATUS_DISABLED || playercount > ply_count || StrEqual(s_map, map))
 			{
 				return ITEMDRAW_DISABLED;	
