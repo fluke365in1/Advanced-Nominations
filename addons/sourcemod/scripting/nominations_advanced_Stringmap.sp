@@ -49,6 +49,7 @@ public Plugin myinfo =
 
 ConVar g_Cvar_ExcludeOld;
 ConVar g_Cvar_ExcludeCurrent;
+ConVar g_Cvar_RemoveOnDisconnect;
 
 Menu g_MapMenu = null;
 Menu g_PreMapMenu = null;
@@ -78,6 +79,7 @@ public void OnPluginStart()
 	
 	g_Cvar_ExcludeOld = CreateConVar("sm_nominate_excludeold", "1", "Specifies if the current map should be excluded from the Nominations list", 0, true, 0.00, true, 1.0);
 	g_Cvar_ExcludeCurrent = CreateConVar("sm_nominate_excludecurrent", "1", "Specifies if the MapChooser excluded maps should also be excluded from Nominations", 0, true, 0.00, true, 1.0);
+	g_Cvar_RemoveOnDisconnect = CreateConVar("sm_nominate_disconnect_vote", "0", "Specifies if the player's vote is removed on disconnect'", 0, true, 0.00, true, 1.0);
 	
 	RegConsoleCmd("sm_nominate", Command_Nominate);
 	
@@ -114,20 +116,23 @@ public void OnClientDisconnect(int client)
 	{
 		--ply_count;
 	}
-	char cookie[PLATFORM_MAX_PATH];
-	GetClientCookie(client, g_hNominationCookie, cookie, sizeof(cookie));
-	SetClientCookie(client, g_hNominationCookie, "");
 	
-	int map_array[2];
-	g_mapInfo.GetArray(cookie, map_array, 2);
-	++map_array[0];
-	
-	if(RemoveNominationByMap(cookie))
+	if(GetConVarInt(g_Cvar_RemoveOnDisconnect) == 1)
 	{
-		PrintToChatAll("[SM] %t", "Map Removed", cookie);
-	}
+		char cookie[PLATFORM_MAX_PATH];
+		GetClientCookie(client, g_hNominationCookie, cookie, sizeof(cookie));
+		
+		int map_array[2];
+		g_mapInfo.GetArray(cookie, map_array, 2);
+		++map_array[0];
 	
-	g_mapInfo.SetArray(cookie, map_array, 2);
+		if(RemoveNominationByMap(cookie))
+		{
+			PrintToChatAll("[SM] %t", "Map Removed", cookie);
+		}
+		g_mapInfo.SetArray(cookie, map_array, 2);
+	}
+	SetClientCookie(client, g_hNominationCookie, "");
 }
 
 public void OnConfigsExecuted()
